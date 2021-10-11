@@ -1346,12 +1346,24 @@ func (s Service) removeHostSourcesInRepo(ctx context.Context, targetId string, h
 	return out, hs, cl, nil
 }
 
-func (s Service) addCredentialSourcesInRepo(ctx context.Context, targetId string, ids []string, version uint32) (target.Target, []target.HostSource, []target.CredentialSource, error) {
+func (s Service) addCredentialSourcesInRepo(ctx context.Context, targetId string, applicationIds []string, version uint32) (target.Target, []target.HostSource, []target.CredentialSource, error) {
 	repo, err := s.repoFn()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	out, hs, credSources, err := repo.AddTargetCredentialSources(ctx, targetId, version, strutil.RemoveDuplicates(ids, false))
+	sourcesByPurpose := map[credential.Purpose][]string{
+		credential.ApplicationPurpose: strutil.RemoveDuplicates(applicationIds, false),
+	}
+	credLibs := make([]*target.CredentialLibrary, 0)
+	for purpose, ids := range sourcesByPurpose {
+		libs, err := createCredLibs(targetId, ids, purpose)
+		if err != nil {
+			return nil, nil, nil, handlers.ApiErrorWithCodeAndMessage(codes.Internal, "Unable to set credential sources in target: %v.", err)
+		}
+		credLibs = append(credLibs, libs...)
+	}
+
+	out, hs, credSources, err := repo.AddTargetCredentialSources(ctx, targetId, version, credLibs)
 	if err != nil {
 		// TODO: Figure out a way to surface more helpful error info beyond the Internal error.
 		return nil, nil, nil, handlers.ApiErrorWithCodeAndMessage(codes.Internal, "Unable to add credential sources to target: %v.", err)
@@ -1362,13 +1374,26 @@ func (s Service) addCredentialSourcesInRepo(ctx context.Context, targetId string
 	return out, hs, credSources, nil
 }
 
-func (s Service) setCredentialSourcesInRepo(ctx context.Context, targetId string, ids []string, version uint32) (target.Target, []target.HostSource, []target.CredentialSource, error) {
+func (s Service) setCredentialSourcesInRepo(ctx context.Context, targetId string, applicationIds []string, version uint32) (target.Target, []target.HostSource, []target.CredentialSource, error) {
 	const op = "targets.(Service).setCredentialSourcesInRepo"
 	repo, err := s.repoFn()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	_, _, _, err = repo.SetTargetCredentialSources(ctx, targetId, version, strutil.RemoveDuplicates(ids, false))
+
+	sourcesByPurpose := map[credential.Purpose][]string{
+		credential.ApplicationPurpose: strutil.RemoveDuplicates(applicationIds, false),
+	}
+	credLibs := make([]*target.CredentialLibrary, 0)
+	for purpose, ids := range sourcesByPurpose {
+		libs, err := createCredLibs(targetId, ids, purpose)
+		if err != nil {
+			return nil, nil, nil, handlers.ApiErrorWithCodeAndMessage(codes.Internal, "Unable to set credential sources in target: %v.", err)
+		}
+		credLibs = append(credLibs, libs...)
+	}
+
+	_, _, _, err = repo.SetTargetCredentialSources(ctx, targetId, version, credLibs)
 	if err != nil {
 		// TODO: Figure out a way to surface more helpful error info beyond the Internal error.
 		return nil, nil, nil, handlers.ApiErrorWithCodeAndMessage(codes.Internal, "Unable to set credential sources in target: %v.", err)
@@ -1384,13 +1409,25 @@ func (s Service) setCredentialSourcesInRepo(ctx context.Context, targetId string
 	return out, hs, credSources, nil
 }
 
-func (s Service) removeCredentialSourcesInRepo(ctx context.Context, targetId string, ids []string, version uint32) (target.Target, []target.HostSource, []target.CredentialSource, error) {
+func (s Service) removeCredentialSourcesInRepo(ctx context.Context, targetId string, applicationIds []string, version uint32) (target.Target, []target.HostSource, []target.CredentialSource, error) {
 	const op = "targets.(Service).removeCredentialSourcesInRepo"
 	repo, err := s.repoFn()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	_, err = repo.DeleteTargetCredentialSources(ctx, targetId, version, strutil.RemoveDuplicates(ids, false))
+
+	sourcesByPurpose := map[credential.Purpose][]string{
+		credential.ApplicationPurpose: strutil.RemoveDuplicates(applicationIds, false),
+	}
+	credLibs := make([]*target.CredentialLibrary, 0)
+	for purpose, ids := range sourcesByPurpose {
+		libs, err := createCredLibs(targetId, ids, purpose)
+		if err != nil {
+			return nil, nil, nil, handlers.ApiErrorWithCodeAndMessage(codes.Internal, "Unable to set credential sources in target: %v.", err)
+		}
+		credLibs = append(credLibs, libs...)
+	}
+	_, err = repo.DeleteTargetCredentialSources(ctx, targetId, version, credLibs)
 	if err != nil {
 		// TODO: Figure out a way to surface more helpful error info beyond the Internal error.
 		return nil, nil, nil, handlers.ApiErrorWithCodeAndMessage(codes.Internal, "Unable to remove credential sources from target: %v.", err)
@@ -2002,4 +2039,16 @@ func validateAuthorizeSessionRequest(req *pbs.AuthorizeSessionRequest) error {
 		return handlers.InvalidArgumentErrorf("Errors in provided fields.", badFields)
 	}
 	return nil
+}
+
+func createCredLibs(targetId string, ids []string, purpose credential.Purpose) ([]*target.CredentialLibrary, error) {
+	credLibs := make([]*target.CredentialLibrary, 0, len(ids))
+	for _, id := range ids {
+		l, err := target.NewCredentialLibrary(targetId, id, purpose)
+		if err != nil {
+			return nil, err
+		}
+		credLibs = append(credLibs, l)
+	}
+	return credLibs, nil
 }

@@ -380,13 +380,10 @@ func (r *Repository) CreateTarget(ctx context.Context, target Target, opt ...Opt
 		newHostSets = append(newHostSets, hostSet)
 	}
 
-	newCredLibs := make([]interface{}, 0, len(opts.WithCredentialSources))
-	for _, clId := range opts.WithCredentialSources {
-		credLib, err := NewCredentialLibrary(t.GetPublicId(), clId)
-		if err != nil {
-			return nil, nil, nil, errors.Wrap(ctx, err, op, errors.WithMsg("unable to create in memory target credential library"))
-		}
-		newCredLibs = append(newCredLibs, credLib)
+	newCredLibs := make([]interface{}, 0, len(opts.WithCredentialLibraries))
+	for _, cl := range opts.WithCredentialLibraries {
+		cl.TargetId = t.GetPublicId()
+		newCredLibs = append(newCredLibs, cl)
 	}
 
 	metadata := t.Oplog(oplog.OpType_OP_TYPE_CREATE)
