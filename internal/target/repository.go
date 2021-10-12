@@ -323,7 +323,7 @@ func (r *Repository) update(ctx context.Context, target Target, version uint32, 
 
 // CreateTarget inserts into the repository and returns the new Target with
 // its list of host sets and credential libraries.
-// WithHostSources and WithCredentialSources are the only supported option.
+// WithHostSources and WithCredentialLibraries are the only supported option.
 func (r *Repository) CreateTarget(ctx context.Context, target Target, opt ...Option) (Target, []HostSource, []CredentialSource, error) {
 	const op = "target.(Repository).CreateTarget"
 	opts := GetOpts(opt...)
@@ -384,6 +384,13 @@ func (r *Repository) CreateTarget(ctx context.Context, target Target, opt ...Opt
 	for _, cl := range opts.WithCredentialLibraries {
 		cl.TargetId = t.GetPublicId()
 		newCredLibs = append(newCredLibs, cl)
+	}
+	vetCredentialLibraries, ok := subtypeRegistry.vetCredentialLibrariesFunc(target.GetType())
+	if !ok {
+		return nil, nil, nil, errors.New(ctx, errors.InvalidParameter, op, fmt.Sprintf("%s is an unsupported target type %s", target.GetPublicId(), target.GetType()))
+	}
+	if err := vetCredentialLibraries(ctx, opts.WithCredentialLibraries); err != nil {
+		return nil, nil, nil, err
 	}
 
 	metadata := t.Oplog(oplog.OpType_OP_TYPE_CREATE)

@@ -5,6 +5,7 @@ package targettest
 
 import (
 	"context"
+	"testing"
 
 	"github.com/hashicorp/boundary/internal/db"
 	"github.com/hashicorp/boundary/internal/db/timestamp"
@@ -13,6 +14,7 @@ import (
 	"github.com/hashicorp/boundary/internal/target"
 	"github.com/hashicorp/boundary/internal/target/targettest/store"
 	"github.com/hashicorp/boundary/internal/types/subtypes"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -138,6 +140,10 @@ func (t *Target) SetDescription(description string) {
 	t.Description = description
 }
 
+func (t *Target) SetVersion(v uint32) {
+	t.Version = v
+}
+
 func (t *Target) SetDefaultPort(port uint32) {
 	t.DefaultPort = port
 }
@@ -171,25 +177,16 @@ func (t *Target) Oplog(op oplog.OpType) oplog.Metadata {
 	}
 }
 
-func allocTarget() Target {
-	return Target{
+// Alloc creates an in-memory Target.
+func Alloc() target.Target {
+	return &Target{
 		Target: &store.Target{},
 	}
 }
 
-type repository struct{}
-
-func (r *repository) Alloc(publicId string, version uint32, op oplog.OpType) (target.Target, oplog.Metadata) {
-	t := allocTarget()
-	t.PublicId = publicId
-	t.Version = version
-	metadata := t.Oplog(op)
-
-	return &t, metadata
-}
-
-func (r *repository) ValidateCreate(ctx context.Context, t target.Target) error {
-	const op = "target_test.(repository).ValidateCreate"
+// Vet checks that the given Target is a targettest.Target and that it is not nil.
+func Vet(ctx context.Context, t target.Target) error {
+	const op = "target_test.Vet"
 
 	tt, ok := t.(*Target)
 	if !ok {
@@ -200,43 +197,13 @@ func (r *repository) ValidateCreate(ctx context.Context, t target.Target) error 
 		return errors.New(ctx, errors.InvalidParameter, op, "missing target")
 	}
 
-	if tt.ScopeId == "" {
-		return errors.New(ctx, errors.InvalidParameter, op, "missing scope id")
-	}
-	if tt.Name == "" {
-		return errors.New(ctx, errors.InvalidParameter, op, "missing name")
-	}
-	if tt.PublicId != "" {
-		return errors.New(ctx, errors.InvalidParameter, op, "public id not empty")
-	}
 	return nil
 }
 
-func (r *repository) ValidateUpdate(ctx context.Context, t target.Target) error {
-	const op = "target_test.(repository).ValidateUpdate"
-
-	tt, ok := t.(*Target)
-	if !ok {
-		return errors.New(ctx, errors.InvalidParameter, op, "target is not a target_test.Target")
-	}
-
-	if tt.PublicId == "" {
-		return errors.New(ctx, errors.InvalidParameter, op, "missing target public id")
-	}
+// VetCredentialLibraries allows for any CredentialLibraries.
+func VetCredentialLibraries(_ context.Context, _ []*target.CredentialLibrary) error {
 	return nil
 }
-
-func (r *repository) NewTargetId() (string, error) {
-	const op = "target_test.(repository).NewTargetId"
-	id, err := db.NewPublicId(TargetPrefix)
-	if err != nil {
-		return "", errors.WrapDeprecated(err, op)
-	}
-	return id, nil
-}
-
-// RH provide the RepositoryHooks for the Target.
-var RH target.RepositoryHooks = &repository{}
 
 // NewTarget creates a targettest.Target.
 func NewTarget(scopeId string, opt ...target.Option) (*Target, error) {
@@ -257,4 +224,41 @@ func NewTarget(scopeId string, opt ...target.Option) (*Target, error) {
 		},
 	}
 	return t, nil
+}
+
+// TestNewTestTarget is a test helper for creating a targettest.Target.
+func TestNewTestTarget(t *testing.T, conn *db.DB, scopeId, name string, opt ...target.Option) *Target {
+	t.Helper()
+	opt = append(opt, target.WithName(name))
+	opts := target.GetOpts(opt...)
+	require := require.New(t)
+	rw := db.New(conn)
+	tar, err := NewTarget(scopeId, opt...)
+	require.NoError(err)
+	id, err := db.NewPublicId(TargetPrefix)
+	require.NoError(err)
+	tar.PublicId = id
+	err = rw.Create(context.Background(), tar)
+	require.NoError(err)
+
+	if len(opts.WithHostSources) > 0 {
+		newHostSets := make([]interface{}, 0, len(opts.WithHostSources))
+		for _, s := range opts.WithHostSources {
+			hostSet, err := target.NewTargetHostSet(tar.PublicId, s)
+			require.NoError(err)
+			newHostSets = append(newHostSets, hostSet)
+		}
+		err := rw.CreateItems(context.Background(), newHostSets)
+		require.NoError(err)
+	}
+	if len(opts.WithCredentialLibraries) > 0 {
+		newCredLibs := make([]interface{}, 0, len(opts.WithCredentialLibraries))
+		for _, cl := range opts.WithCredentialLibraries {
+			cl.TargetId = tar.PublicId
+			newCredLibs = append(newCredLibs, cl)
+		}
+		err := rw.CreateItems(context.Background(), newCredLibs)
+		require.NoError(err)
+	}
+	return tar
 }

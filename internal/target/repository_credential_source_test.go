@@ -16,44 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testNewTestTarget(t *testing.T, conn *db.DB, scopeId, name string, opt ...target.Option) *targettest.Target {
-	t.Helper()
-	opt = append(opt, target.WithName(name))
-	opts := target.GetOpts(opt...)
-	require := require.New(t)
-	rw := db.New(conn)
-	tar, err := targettest.NewTarget(scopeId, opt...)
-	require.NoError(err)
-	id, err := targettest.RH.NewTargetId()
-	require.NoError(err)
-	tar.PublicId = id
-	err = rw.Create(context.Background(), tar)
-	require.NoError(err)
-
-	if len(opts.WithHostSources) > 0 {
-		newHostSets := make([]interface{}, 0, len(opts.WithHostSources))
-		for _, s := range opts.WithHostSources {
-			hostSet, err := target.NewTargetHostSet(tar.PublicId, s)
-			require.NoError(err)
-			newHostSets = append(newHostSets, hostSet)
-		}
-		err := rw.CreateItems(context.Background(), newHostSets)
-		require.NoError(err)
-	}
-	if len(opts.WithCredentialLibraries) > 0 {
-		newCredLibs := make([]interface{}, 0, len(opts.WithCredentialLibraries))
-		for _, cl := range opts.WithCredentialLibraries {
-			cl.TargetId = tar.PublicId
-			newCredLibs = append(newCredLibs, cl)
-		}
-		err := rw.CreateItems(context.Background(), newCredLibs)
-		require.NoError(err)
-	}
-	return tar
-}
-
 func TestRepository_SetTargetCredentialSources(t *testing.T) {
-	target.Register(targettest.Subtype, targettest.RH, targettest.TargetPrefix)
+	target.Register(targettest.Subtype, targettest.Alloc, targettest.Vet, targettest.VetCredentialLibraries, targettest.TargetPrefix)
 
 	t.Parallel()
 	conn, _ := db.TestSetup(t, "postgres")
@@ -149,7 +113,6 @@ func TestRepository_SetTargetCredentialSources(t *testing.T) {
 		{
 			name: "remove-add-change-purpose",
 			setup: func(tar target.Target) ([]target.CredentialSource, []*target.CredentialLibrary) {
-
 				cls := []*target.CredentialLibrary{
 					target.TestNewCredentialLibrary(tar.GetPublicId(), lib1.PublicId, credential.ApplicationPurpose),
 					target.TestNewCredentialLibrary(tar.GetPublicId(), lib2.PublicId, credential.ApplicationPurpose),
@@ -218,7 +181,7 @@ func TestRepository_SetTargetCredentialSources(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 
-			tar := testNewTestTarget(t, conn, proj.PublicId, tt.name)
+			tar := targettest.TestNewTestTarget(t, conn, proj.PublicId, tt.name)
 
 			var origCredSources []target.CredentialSource
 			var origCredLibraries []*target.CredentialLibrary
@@ -226,15 +189,19 @@ func TestRepository_SetTargetCredentialSources(t *testing.T) {
 				origCredSources, origCredLibraries = tt.setup(tar)
 			}
 
-			wantCredSources := make(map[string]*target.CredentialLibrary)
+			wantCredSources := make(map[string]target.CredentialSource)
 			for _, cl := range tt.args.cls {
 				cl.TargetId = tar.GetPublicId()
-				wantCredSources[cl.CredentialLibraryId+"_"+cl.CredentialPurpose] = cl
+				wantCredSources[cl.CredentialLibraryId+"_"+cl.CredentialPurpose] = &target.TargetLibrary{
+					CredentialLibrary: cl.CredentialLibrary,
+				}
 			}
 			if tt.args.addToOrigLibs {
 				tt.args.cls = append(tt.args.cls, origCredLibraries...)
 				for _, cl := range origCredLibraries {
-					wantCredSources[cl.CredentialLibraryId+"_"+cl.CredentialPurpose] = cl
+					wantCredSources[cl.CredentialLibraryId+"_"+cl.CredentialPurpose] = &target.TargetLibrary{
+						CredentialLibrary: cl.CredentialLibrary,
+					}
 				}
 			}
 
@@ -258,8 +225,8 @@ func TestRepository_SetTargetCredentialSources(t *testing.T) {
 			for _, cs := range got {
 				w, ok := wantCredSources[cs.Id()+"_"+string(cs.CredentialPurpose())]
 				assert.True(ok, "got unexpected credentialsource %v", cs)
-				assert.Equal(w.CredentialLibraryId, cs.Id())
-				assert.Equal(w.CredentialPurpose, string(cs.CredentialPurpose()))
+				assert.Equal(w.Id(), cs.Id())
+				assert.Equal(w.CredentialPurpose(), cs.CredentialPurpose())
 			}
 
 			foundTarget, _, _, err := repo.LookupTarget(context.Background(), tar.GetPublicId())
