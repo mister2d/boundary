@@ -1,14 +1,24 @@
 package authmethods_test
 
 import (
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"net/http"
+	"os"
+	"sync"
 	"testing"
 
 	"github.com/hashicorp/boundary/api"
 	"github.com/hashicorp/boundary/api/authmethods"
 	"github.com/hashicorp/boundary/internal/auth/password"
+	"github.com/hashicorp/boundary/internal/cmd/config"
+	"github.com/hashicorp/boundary/internal/observability/event"
 	"github.com/hashicorp/boundary/internal/servers/controller"
+	tests_api "github.com/hashicorp/boundary/internal/tests/api"
 	capoidc "github.com/hashicorp/cap/oidc"
+	"github.com/hashicorp/eventlogger/formatter_filters/cloudevents"
+	"github.com/hashicorp/go-hclog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,8 +26,23 @@ import (
 const global = "global"
 
 func TestCrud(t *testing.T) {
+	// this cannot run in parallel because it relies on envvar
+	// globals.BOUNDARY_DEVELOPER_ENABLE_EVENTS
+	event.TestEnableEventing(t, true)
+
 	assert, require := assert.New(t), require.New(t)
-	tc := controller.NewTestController(t, nil)
+	eventConfig := event.TestEventerConfig(t, "TestAuthenticateAuditEntry", event.TestWithAuditSink(t))
+	testLock := &sync.Mutex{}
+	testLogger := hclog.New(&hclog.LoggerOptions{
+		Mutex: testLock,
+		Name:  "test",
+	})
+	require.NoError(event.InitSysEventer(testLogger, testLock, "TestAuthenticateAuditEntry", event.WithEventerConfig(&eventConfig.EventerConfig)))
+	tcConfig, err := config.DevController()
+	require.NoError(err)
+	tcConfig.Eventing = &eventConfig.EventerConfig
+
+	tc := controller.NewTestController(t, &controller.TestControllerOpts{Config: tcConfig})
 	defer tc.Shutdown()
 
 	client := tc.Client()
@@ -35,14 +60,44 @@ func TestCrud(t *testing.T) {
 		assert.EqualValues(wantedVersion, u.Version)
 	}
 
+	require.NotNil(eventConfig.AuditEvents)
+	_ = os.WriteFile(eventConfig.AuditEvents.Name(), nil, 0o666) // clean out audit events from previous calls
 	u, err := amClient.Create(tc.Context(), "password", global,
 		authmethods.WithName("bar"))
 	require.NoError(err)
 	checkAuthMethod("create", u.Item, "bar", 1)
 
+	b, err := ioutil.ReadFile(eventConfig.AuditEvents.Name())
+	assert.NoError(err)
+	got := &cloudevents.Event{}
+	err = json.Unmarshal(b, got)
+	require.NoErrorf(err, "json: %s", string(b))
+
+	fmt.Println(string(b))
+	tests_api.AssertFiltering(t, got,
+		tests_api.WithRedactedRequestAttrs(t, []string{}),
+		tests_api.WithRedactedResponseAttrs(t, []string{}),
+		tests_api.WithRedactedRequestParameters(t, []string{}),
+		tests_api.WithRedactedResponseParameters(t, []string{}),
+	)
+
+	_ = os.WriteFile(eventConfig.AuditEvents.Name(), nil, 0o666) // clean out audit events from previous calls
 	u, err = amClient.Read(tc.Context(), u.Item.Id)
 	require.NoError(err)
 	checkAuthMethod("read", u.Item, "bar", 1)
+	b, err = ioutil.ReadFile(eventConfig.AuditEvents.Name())
+	assert.NoError(err)
+	got = &cloudevents.Event{}
+	err = json.Unmarshal(b, got)
+	require.NoErrorf(err, "json: %s", string(b))
+
+	fmt.Println(string(b))
+	tests_api.AssertFiltering(t, got,
+		tests_api.WithRedactedRequestAttrs(t, []string{}),
+		tests_api.WithRedactedResponseAttrs(t, []string{}),
+		tests_api.WithRedactedRequestParameters(t, []string{}),
+		tests_api.WithRedactedResponseParameters(t, []string{}),
+	)
 
 	u, err = amClient.Update(tc.Context(), u.Item.Id, u.Item.Version, authmethods.WithName("buz"))
 	require.NoError(err)
