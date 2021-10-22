@@ -45,7 +45,7 @@ func vetCredentialLibraries(ctx context.Context, cls []*target.CredentialLibrary
 
 	for _, cl := range cls {
 		if cl.CredentialPurpose != string(credential.ApplicationPurpose) {
-			return errors.New(ctx, errors.InvalidParameter, op, fmt.Sprintf("tcp.Target only supports credential purpose %s", credential.ApplicationPurpose))
+			return errors.New(ctx, errors.InvalidParameter, op, fmt.Sprintf("tcp.Target only supports credential purpose: %q", credential.ApplicationPurpose))
 		}
 	}
 	return nil
