@@ -120,7 +120,7 @@ func Test_GetOpts(t *testing.T) {
 			{
 				CredentialLibrary: &store.CredentialLibrary{
 					CredentialLibraryId: "bob",
-					CredentialPurpose:   string(credential.ApplicationPurpose),
+					CredentialPurpose:   string(credential.EgressPurpose),
 				},
 			},
 		}))
@@ -135,7 +135,7 @@ func Test_GetOpts(t *testing.T) {
 			{
 				CredentialLibrary: &store.CredentialLibrary{
 					CredentialLibraryId: "bob",
-					CredentialPurpose:   string(credential.ApplicationPurpose),
+					CredentialPurpose:   string(credential.EgressPurpose),
 				},
 			},
 		}
