@@ -11,7 +11,8 @@ import (
 )
 
 // TestNewCredentialLibrary creates a new in memory CredentialLibrary
-// representing the relationship between targetId and credentialLibraryId.
+// representing the relationship between targetId and credentialLibraryId with
+// the given purpose.
 func TestNewCredentialLibrary(targetId, credentialLibraryId string, purpose credential.Purpose) *CredentialLibrary {
 	return &CredentialLibrary{
 		CredentialLibrary: &store.CredentialLibrary{
@@ -23,7 +24,7 @@ func TestNewCredentialLibrary(targetId, credentialLibraryId string, purpose cred
 }
 
 // TestCredentialLibrary creates a CredentialLibrary for targetId and
-// libraryId.
+// libraryId with the credential purpose of application.
 func TestCredentialLibrary(t *testing.T, conn *db.DB, targetId, libraryId string) *CredentialLibrary {
 	t.Helper()
 	require := require.New(t)
